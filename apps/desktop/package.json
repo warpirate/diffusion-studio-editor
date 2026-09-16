@@ -7,7 +7,7 @@
   "author": "Diffusion Studio contributors",
   "repository": {
     "type": "git",
-    "url": "https://github.com/diffusionstudio/editor.git"
+    "url": "https://github.com/warpirate/diffusion-studio-editor.git"
   },
   "main": "dist/main.js",
   "scripts": {
@@ -31,6 +31,7 @@
   "devDependencies": {
     "@electron-forge/cli": "^7.11.1",
     "@electron-forge/maker-dmg": "^7.11.1",
+    "@electron-forge/maker-squirrel": "^7.11.2",
     "@electron-forge/maker-zip": "^7.11.1",
     "@electron-forge/publisher-github": "^7.11.1",
     "@types/babel__core": "^7.20.5",
@@ -42,6 +43,7 @@
   "dependencies": {
     "@babel/core": "^7.29.7",
     "@babel/preset-typescript": "^7.27.1",
+    "@diffusionstudio/agent-chat": "*",
     "@diffusionstudio/dapi": "*",
     "@diffusionstudio/jsx": "*",
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -50,7 +52,6 @@
     "nanoid": "^6.0.1",
     "ts-morph": "^28.0.0",
     "update-electron-app": "^3.0.0",
-    "yaml": "^2.9.0",
-    "@diffusionstudio/agent-chat": "*"
+    "yaml": "^2.9.0"
   }
 }

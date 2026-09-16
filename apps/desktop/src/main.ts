@@ -4,7 +4,7 @@
 
 import { app, BrowserWindow, nativeImage, session, shell } from "electron";
 import { dirname, join } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, open, rename, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
@@ -85,8 +85,33 @@ function applyBackdrop() {
   setNativeBackdrop(mainWindow.getNativeWindowHandle(), blur, red, green, blue, alpha);
 }
 
+/**
+ * Where updates come from: this build's own repository, read from
+ * package.json rather than hardcoded, so a fork checks its own releases
+ * instead of someone else's. `DIFFUSION_UPDATE_REPO` overrides it, and an
+ * empty value turns updates off for a build that publishes none.
+ */
+function updateRepo(): string | null {
+  const override = process.env.DIFFUSION_UPDATE_REPO;
+  if (override !== undefined) return override.trim() || null;
+  try {
+    const pkg = JSON.parse(readFileSync(join(app.getAppPath(), "package.json"), "utf8")) as {
+      repository?: string | { url?: string };
+    };
+    const raw = typeof pkg.repository === "string" ? pkg.repository : pkg.repository?.url;
+    const match = raw ? /github\.com[/:]([^/]+)\/([^/.]+)/.exec(raw) : null;
+    return match ? `${match[1]}/${match[2]}` : null;
+  } catch {
+    // No readable package.json: no updates rather than someone else's.
+    return null;
+  }
+}
+
 if (app.isPackaged && !process.argv.includes("--hidden")) {
-  updateElectronApp({ repo: "diffusionstudio/editor" });
+  const repo = updateRepo();
+  // Squirrel is what `autoUpdater` drives on Windows; a build installed any
+  // other way (an unpacked folder) has none, and the check only logs an error.
+  if (repo) updateElectronApp({ repo });
 }
 
 const openWrites = new Map<string, { handle: FileHandle; path: string; temp: string; reserved: boolean }>();

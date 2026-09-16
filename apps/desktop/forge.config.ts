@@ -4,6 +4,7 @@
 
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerDMG } from '@electron-forge/maker-dmg';
+import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { PublisherGithub } from '@electron-forge/publisher-github';
 import { readFileSync } from 'node:fs';
@@ -41,6 +42,21 @@ const config: ForgeConfig = {
         : undefined,
   },
   makers: [
+    // Windows ships a Squirrel installer, not a folder to unzip. It is also
+    // what `autoUpdater` needs: a build installed any other way reports
+    // "Can not find Squirrel" on every launch and can never update itself.
+    new MakerSquirrel({
+      // `name` becomes the NuGet package id, so it takes no spaces; `title`
+      // is what Windows shows in Apps & features. NuGet also requires
+      // `description` and `authors`, neither of which the macOS makers need.
+      name: 'diffusion-studio',
+      title: 'Diffusion Studio',
+      authors: 'Diffusion Studio contributors',
+      description: 'The professional video editor built for agents.',
+      setupExe: `Diffusion-Studio-${version}-Setup.exe`,
+      setupIcon: './assets/icon.ico',
+      iconUrl: 'https://raw.githubusercontent.com/warpirate/diffusion-studio-editor/main/apps/desktop/assets/icon.ico',
+    }),
     new MakerZIP({}, ['darwin']),
     new MakerDMG({
       name: `Diffusion-Studio-${process.arch}`,
