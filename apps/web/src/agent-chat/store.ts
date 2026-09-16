@@ -15,6 +15,7 @@ import { toast } from "somoto";
 import {
   AgentChatError,
   emptyTranscript,
+  harnessesSettled,
   reduce,
   type ChatEvent,
   type ChatSnapshot,
@@ -118,31 +119,39 @@ let connected = false;
 let harnessesAt = 0;
 
 /**
- * Whether the host has said anything about its harnesses yet. The first
- * screen waits on this: asking someone to connect an agent they already
- * have, for the half-second before the probes land, is a worse bug than a
- * slightly longer splash.
+ * Whether every harness has finished probing. The host answers a new
+ * connection immediately with a `checking` placeholder for each one, long
+ * before it knows anything, so "a list arrived" is not "the probes are
+ * done" — treating it as such flashes the sign-in screen at someone who is
+ * already signed in.
  */
-const [probed, setProbed] = createSignal(false);
-export { probed as harnessesProbed };
+const settled = (): boolean => harnessesSettled(state.harnesses);
+
+/**
+ * How long the first screen waits for probes before deciding without them.
+ * A probe shells out to `claude` and `codex`, which is slow on a cold
+ * start; past this the splash has outstayed its welcome and it is better to
+ * show the sign-in screen, which corrects itself when the probes land.
+ */
+const PROBE_SETTLE_TIMEOUT_MS = 20_000;
+
+const [settleTimedOut, setSettleTimedOut] = createSignal(false);
 
 /** Connects once; safe to call from anywhere the chat is about to be used. */
 export function ensureConnected(): void {
   if (connected) return;
   connected = true;
-  client.onState((connection) => {
-    setState("connection", connection);
-    // No host to answer: nothing is coming, so stop waiting on it.
-    if (connection === "unavailable") setProbed(true);
-  });
+  client.onState((connection) => setState("connection", connection));
   client.onHarnesses((harnesses) => {
     harnessesAt = Date.now();
-    setProbed(true);
     setState("harnesses", harnesses);
   });
   client.onCredentials((credentials) => setState("credentials", credentials));
   setState("connection", hasHost() ? "connecting" : "unavailable");
-  if (hasHost()) client.connect();
+  if (!hasHost()) return;
+  client.connect();
+  // A host that never comes up must not leave the app on its splash.
+  setTimeout(() => setSettleTimedOut(true), PROBE_SETTLE_TIMEOUT_MS);
 }
 
 /** Resolves once the socket is open, or rejects after a short wait. */
@@ -195,11 +204,16 @@ export const agentAvailable = (): boolean => readyHarnesses().length > 0 || usab
  */
 export function needsAgentLogin(): boolean {
   if (!hasHost() || skippedAgentLogin()) return false;
-  return probed() && !agentAvailable();
+  return agentStateResolved() && !agentAvailable();
 }
 
-/** Whether the agent state has settled enough to decide what to render. */
-export const agentStateResolved = (): boolean => !hasHost() || probed();
+/**
+ * Whether the agent state has settled enough to decide what to render.
+ * Until it has, the boot splash stays up rather than showing a screen that
+ * would be replaced a moment later.
+ */
+export const agentStateResolved = (): boolean =>
+  !hasHost() || state.connection === "unavailable" || settled() || settleTimedOut();
 
 /** Families picked before anything is remembered, best first, across every ready harness. */
 const PREFERRED_MODELS = [/fable/i, /astra/i, /opus/i];

@@ -297,6 +297,18 @@ export const HARNESS_LABELS: Record<HarnessId, string> = {
   codex: "Codex",
 };
 
+/**
+ * Whether a harness list is an answer rather than a placeholder. The host
+ * replies to a new connection at once with `checking` for every harness,
+ * before it has run anything, so a list having arrived says nothing about
+ * what is installed. A gate that reads the placeholder as "nothing is
+ * ready" shows its sign-in screen to someone who is already signed in, for
+ * as long as the probes take.
+ */
+export function harnessesSettled(harnesses: HarnessInfo[]): boolean {
+  return harnesses.length > 0 && harnesses.every((harness) => harness.status !== "checking");
+}
+
 export const HARNESS_IDS: readonly HarnessId[] = ["claude", "codex"];
 
 export function isHarnessId(value: unknown): value is HarnessId {

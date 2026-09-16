@@ -5,6 +5,8 @@
 import { describe, expect, it } from "vitest";
 
 import { DETAIL_MAX, IMAGES_MAX, IMAGE_MAX, collectResult } from "../src/host/harness";
+import { HARNESS_LABELS, harnessesSettled } from "../src/protocol";
+import type { HarnessId, HarnessInfo, HarnessStatus } from "../src/protocol";
 
 const png = (data = "iVBORw0KGgo=") => ({ type: "image", source: { type: "base64", media_type: "image/png", data } });
 
@@ -39,5 +41,34 @@ describe("collectResult", () => {
   it("drops empty output", () => {
     expect(collectResult([])).toEqual({});
     expect(collectResult([{ type: "text", text: "  " }])).toEqual({});
+  });
+});
+
+describe("harnessesSettled", () => {
+  const info = (id: HarnessId, status: HarnessStatus): HarnessInfo => ({
+    id,
+    label: HARNESS_LABELS[id],
+    status,
+    models: [],
+  });
+
+  it("is false for the placeholder the host sends on connect", () => {
+    // What `AgentHost.connect` pushes before any probe has run. A gate that
+    // reads this as an answer shows its sign-in screen to someone who is
+    // already signed in, until the probes land.
+    expect(harnessesSettled([info("claude", "checking"), info("codex", "checking")])).toBe(false);
+  });
+
+  it("is false while any single harness is still checking", () => {
+    expect(harnessesSettled([info("claude", "ready"), info("codex", "checking")])).toBe(false);
+  });
+
+  it("is false before any list has arrived", () => {
+    expect(harnessesSettled([])).toBe(false);
+  });
+
+  it("is true once every harness has a real answer", () => {
+    expect(harnessesSettled([info("claude", "ready"), info("codex", "signed-out")])).toBe(true);
+    expect(harnessesSettled([info("claude", "not-installed"), info("codex", "error")])).toBe(true);
   });
 });
