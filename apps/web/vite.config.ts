@@ -11,13 +11,19 @@ import { resolve } from 'path'
 import pkg from '../../package.json'
 
 export default defineConfig(({ mode }) => {
-  // The desktop app bundles this build; missing client env would silently ship with auth disabled.
+  // The desktop app bundles this build. Without the client env there is no
+  // Diffusion Studio account, and so no generated images, video, voice or
+  // transcription — but the editor and its agent never needed one, so this
+  // says what is missing rather than refusing to build. A fork that does not
+  // want the hosted backend is a supported thing to be.
   if (mode === 'desktop') {
     const env = loadEnv(mode, __dirname, '')
-    for (const key of ['VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY']) {
-      if (!env[key]) {
-        throw new Error(`${key} is not set. Copy apps/web/.env.example to apps/web/.env before building the desktop app.`)
-      }
+    const missing = ['VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY'].filter((key) => !env[key])
+    if (missing.length) {
+      console.warn(
+        `[build] ${missing.join(' and ')} not set: this build ships without a Diffusion Studio account, ` +
+          `so generated media and transcription are unavailable. Copy apps/web/.env.example to apps/web/.env to include them.`,
+      )
     }
   }
 

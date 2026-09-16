@@ -44,9 +44,12 @@ writeFileSync(
   JSON.stringify({ name: "desktop-runtime", private: true, dependencies }, null, 2),
 );
 
+// `npm` is `npm.cmd` on Windows, which `execFileSync` cannot start on its
+// own — it fails before the process exists, with a pid of 0 and no output.
 execFileSync("npm", ["install", "--omit=dev", "--no-audit", "--no-fund", "--no-package-lock"], {
   cwd: stageDir,
   stdio: "inherit",
+  shell: process.platform === "win32",
 });
 
 // Mach-O files inside Resources are not reached by the app-bundle signing

@@ -62,9 +62,11 @@ for (const rel of PKGS) {
   writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");
 }
 
+// `npm` is `npm.cmd` on Windows, which `execFileSync` cannot start alone.
 execFileSync("npm", ["install", "--package-lock-only", "--no-audit", "--no-fund"], {
   cwd: root,
   stdio: "inherit",
+  shell: process.platform === "win32",
 });
 
 git("add", ...PKGS, "package-lock.json");

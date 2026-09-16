@@ -3,6 +3,8 @@
   "private": true,
   "version": "0.205.1",
   "license": "MPL-2.0",
+  "//author": "Required by electron-packager for Windows builds, where it becomes the executable's CompanyName.",
+  "author": "Diffusion Studio contributors",
   "repository": {
     "type": "git",
     "url": "https://github.com/diffusionstudio/editor.git"

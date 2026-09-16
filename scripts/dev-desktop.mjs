@@ -16,6 +16,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
+
+// `npm` and the local bins are `.cmd` shims on Windows, which `execFileSync`
+// and `spawn` cannot start without a shell: they fail before the process
+// exists, with a pid of 0 and nothing on either stream.
+const WINDOWS = process.platform === "win32";
 const BIN = join(ROOT, "node_modules", ".bin");
 const DEV_PORT = 5173;
 const DEV_URL = `http://localhost:${DEV_PORT}`;
@@ -27,7 +32,13 @@ function run(name, bin, args, cwd) {
   // SIGTERM isn't dressed up as a "Lifecycle script failed" error by an npm
   // wrapper. Own process group (detached) so we can signal the tool *and* its
   // children (esbuild, electron) in one shot on teardown.
-  const child = spawn(join(BIN, bin), args, { cwd, stdio: "inherit", detached: true });
+  // On Windows the bin is a `.cmd` shim, which needs a shell to start, and
+  // `detached` there makes a new console window rather than a process group —
+  // teardown kills the tree with `taskkill` instead.
+  const path = join(BIN, WINDOWS ? `${bin}.cmd` : bin);
+  const child = WINDOWS
+    ? spawn(`"${path}"`, args, { cwd, stdio: "inherit", shell: true, windowsHide: true })
+    : spawn(path, args, { cwd, stdio: "inherit", detached: true });
   child.on("exit", (code) => {
     if (shuttingDown) return;
     // A child dying on its own (e.g. Vite crashed) should bring the rest down.
@@ -43,7 +54,10 @@ function shutdown(code) {
   shuttingDown = true;
   for (const child of children) {
     try {
-      process.kill(-child.pid, "SIGTERM");
+      // Windows has no process groups to signal: `taskkill /T` is what
+      // reaches a tree started through a shell.
+      if (WINDOWS) spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+      else process.kill(-child.pid, "SIGTERM");
     } catch {
       // Already gone.
     }
@@ -135,7 +149,7 @@ async function reclaimPort(port) {
 
 // 1. Build the CLI (blocking) so `dapi` and the app agree on the latest code.
 console.log("[dev:desktop] building CLI…");
-execFileSync("npm", ["run", "build", "--workspace=@diffusionstudio/cli"], { stdio: "inherit" });
+execFileSync("npm", ["run", "build", "--workspace=@diffusionstudio/cli"], { stdio: "inherit", shell: WINDOWS });
 
 // 2. Start the web dev server, on a port that is free.
 await reclaimPort(DEV_PORT);
@@ -151,6 +165,6 @@ try {
   shutdown(1);
 }
 console.log("[dev:desktop] building desktop app…");
-execFileSync("npm", ["run", "build", "--workspace=@diffusionstudio/desktop"], { stdio: "inherit" });
+execFileSync("npm", ["run", "build", "--workspace=@diffusionstudio/desktop"], { stdio: "inherit", shell: WINDOWS });
 console.log("[dev:desktop] starting desktop app…");
 run("desktop", "electron-forge", ["start"], join(ROOT, "apps", "desktop"));
