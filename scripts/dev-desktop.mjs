@@ -21,6 +21,23 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 // and `spawn` cannot start without a shell: they fail before the process
 // exists, with a pid of 0 and nothing on either stream.
 const WINDOWS = process.platform === "win32";
+
+/**
+ * The environment the tools run in, without Electron's own variables.
+ * `ELECTRON_RUN_AS_NODE` turns any Electron binary into a bare Node
+ * process — no Chromium, no window, an immediate exit with status 0 — and
+ * editors that are themselves Electron set it for their Node subprocesses.
+ * Inherited, it makes `electron-forge start` appear to do nothing at all.
+ * The app strips these from its own children for the same reason; see
+ * `stripElectron` in packages/agent-chat/src/host/env.ts.
+ */
+function toolEnv() {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("ELECTRON_")) delete env[key];
+  }
+  return env;
+}
 const BIN = join(ROOT, "node_modules", ".bin");
 const DEV_PORT = 5173;
 const DEV_URL = `http://localhost:${DEV_PORT}`;
@@ -37,8 +54,8 @@ function run(name, bin, args, cwd) {
   // teardown kills the tree with `taskkill` instead.
   const path = join(BIN, WINDOWS ? `${bin}.cmd` : bin);
   const child = WINDOWS
-    ? spawn(`"${path}"`, args, { cwd, stdio: "inherit", shell: true, windowsHide: true })
-    : spawn(path, args, { cwd, stdio: "inherit", detached: true });
+    ? spawn(`"${path}"`, args, { cwd, stdio: "inherit", shell: true, windowsHide: true, env: toolEnv() })
+    : spawn(path, args, { cwd, stdio: "inherit", detached: true, env: toolEnv() });
   child.on("exit", (code) => {
     if (shuttingDown) return;
     // A child dying on its own (e.g. Vite crashed) should bring the rest down.
@@ -149,7 +166,7 @@ async function reclaimPort(port) {
 
 // 1. Build the CLI (blocking) so `dapi` and the app agree on the latest code.
 console.log("[dev:desktop] building CLI…");
-execFileSync("npm", ["run", "build", "--workspace=@diffusionstudio/cli"], { stdio: "inherit", shell: WINDOWS });
+execFileSync("npm", ["run", "build", "--workspace=@diffusionstudio/cli"], { stdio: "inherit", shell: WINDOWS, env: toolEnv() });
 
 // 2. Start the web dev server, on a port that is free.
 await reclaimPort(DEV_PORT);
@@ -165,6 +182,6 @@ try {
   shutdown(1);
 }
 console.log("[dev:desktop] building desktop app…");
-execFileSync("npm", ["run", "build", "--workspace=@diffusionstudio/desktop"], { stdio: "inherit", shell: WINDOWS });
+execFileSync("npm", ["run", "build", "--workspace=@diffusionstudio/desktop"], { stdio: "inherit", shell: WINDOWS, env: toolEnv() });
 console.log("[dev:desktop] starting desktop app…");
 run("desktop", "electron-forge", ["start"], join(ROOT, "apps", "desktop"));
