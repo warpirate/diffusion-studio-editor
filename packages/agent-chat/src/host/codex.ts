@@ -13,11 +13,13 @@ import { HARNESS_LABELS } from "../protocol";
 import { compareVersions, killTree, needsShell, parseVersion, quoteArg, resolveBinary } from "./env";
 import { JsonRpcPeer, RpcError } from "./jsonrpc";
 import { QuestionBox, newItemId, summarizeInput, truncateDetail } from "./harness";
+import { codexProviderArgs, credentialEnv } from "./providers";
 
 import type { ChildProcess } from "node:child_process";
 import type { HarnessInfo, Item, Question, RequestResponse } from "../protocol";
 import type { HostEnv } from "./env";
 import type { Emit, Harness, HarnessSession, OpenOptions, ResumeCursor, TurnOutcome } from "./harness";
+import type { ResolvedCredential } from "./providers";
 
 const MIN_VERSION = "0.100.0";
 const PROBE_TIMEOUT_MS = 15_000;
@@ -73,13 +75,23 @@ function threadIdOf(result: unknown): string | null {
   return record.thread?.id ?? record.threadId ?? record.id ?? null;
 }
 
-function spawnAppServer(binary: string, cwd: string, env: Record<string, string>, mcpUrl: string | null): ChildProcess {
+function spawnAppServer(
+  binary: string,
+  cwd: string,
+  env: Record<string, string>,
+  mcpUrl: string | null,
+  credential?: ResolvedCredential,
+): ChildProcess {
   const args = ["app-server", "-c", "features.multi_agent=false", "-c", "features.multi_agent_v2=false"];
   if (mcpUrl) args.push("-c", `mcp_servers.diffusion.url="${mcpUrl}"`);
+  // A brought endpoint is configured per spawn, so `~/.codex/config.toml`
+  // keeps whatever the user put there. The key itself goes in the
+  // environment — `env_key` names it, the arguments never carry it.
+  if (credential) args.push(...codexProviderArgs(credential));
   const shell = needsShell(binary);
   return spawn(shell ? `"${binary}"` : binary, shell ? args.map(quoteArg) : args, {
     cwd,
-    env,
+    env: credential ? { ...env, ...credentialEnv(credential) } : env,
     stdio: ["pipe", "pipe", "pipe"],
     shell,
     windowsHide: true,
@@ -123,7 +135,7 @@ class CodexSession implements HarnessSession {
   }
 
   static async start(options: OpenOptions, policy: Policy, binary: string, version: string): Promise<CodexSession> {
-    const child = spawnAppServer(binary, options.cwd, options.env.env, options.mcp?.url ?? null);
+    const child = spawnAppServer(binary, options.cwd, options.env.env, options.mcp?.url ?? null, options.credential);
     const peer = new JsonRpcPeer(child);
     try {
       await initialize(peer, version);
@@ -440,7 +452,7 @@ export class CodexHarness implements Harness {
       const outdated = version && compareVersions(version, MIN_VERSION) < 0 ? `Update Codex (${version} is older than ${MIN_VERSION})` : undefined;
       const account = (await peer.request("account/read", { refreshToken: false })) as { account?: unknown; requiresOpenaiAuth?: boolean };
       if (!account.account && account.requiresOpenaiAuth) {
-        return { id: this.id, label, status: "signed-out", detail: "Run `codex login` in a terminal", version, models: [] };
+        return { id: this.id, label, status: "signed-out", detail: "Sign in from the model picker", version, models: [] };
       }
       const list = (await peer.request("model/list", {})) as { data?: { id?: string; model?: string; displayName?: string; hidden?: boolean; isDefault?: boolean }[] };
       const models = (list.data ?? [])
@@ -451,7 +463,7 @@ export class CodexHarness implements Harness {
     } catch (error) {
       const message = (error as Error)?.message ?? String(error);
       if (/log ?in|not authenticated|unauthori[sz]ed/i.test(message)) {
-        return { id: this.id, label, status: "signed-out", detail: "Run `codex login` in a terminal", models: [] };
+        return { id: this.id, label, status: "signed-out", detail: "Sign in from the model picker", models: [] };
       }
       return { id: this.id, label, status: "ready", detail: /exited/i.test(message) ? undefined : message, models: STATIC_MODELS, defaultModel: STATIC_MODELS[0]!.id };
     } finally {

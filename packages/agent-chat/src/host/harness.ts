@@ -19,6 +19,7 @@ import type {
   TurnStatus,
 } from "../protocol";
 import type { HostEnv } from "./env";
+import type { ResolvedCredential } from "./providers";
 
 export type ResumeCursor = { claude: { sessionId: string } } | { codex: { threadId: string } };
 
@@ -33,6 +34,12 @@ export type OpenOptions = {
   mcp: McpConfig | null;
   instructions?: string;
   env: HostEnv;
+  /**
+   * A key the user brought, when the chat runs on one instead of the CLI's
+   * own login. The adapter points the child at its endpoint and passes the
+   * key through the environment, never through an argument.
+   */
+  credential?: ResolvedCredential;
   /** The first turn's emitter: for notices about how the session came up. */
   emit: Emit;
 };

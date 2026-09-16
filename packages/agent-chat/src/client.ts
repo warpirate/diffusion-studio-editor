@@ -9,9 +9,11 @@
 // listener gets the fresh snapshot — there is no replay protocol.
 
 import type {
+  AuthEvent,
   ChatEvent,
   ChatSnapshot,
   ClientMsg,
+  CredentialSummary,
   HarnessInfo,
   HostError,
   HostMsg,
@@ -55,6 +57,13 @@ export type AgentChatClientOptions = {
 
 const REQUEST_TIMEOUT_MS = 60_000;
 
+/** A sign-in waits on a person in a browser, so it outlives a normal request. */
+const LOGIN_TIMEOUT_MS = 11 * 60 * 1000;
+
+function timeoutFor(method: Method): number {
+  return method === "auth.login" ? LOGIN_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
+}
+
 export class AgentChatClient {
   private readonly options: AgentChatClientOptions;
   private socket: WebSocket | null = null;
@@ -62,12 +71,15 @@ export class AgentChatClient {
   private subscriptions = new Map<string, Subscription>();
   private stateListeners = new Set<(state: ConnectionState) => void>();
   private harnessListeners = new Set<(harnesses: HarnessInfo[]) => void>();
+  private credentialListeners = new Set<(credentials: CredentialSummary[]) => void>();
+  private authListeners = new Set<(event: AuthEvent) => void>();
   private backoff: number;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = true;
   private nextId = 0;
   private _state: ConnectionState = "closed";
   private _harnesses: HarnessInfo[] = [];
+  private _credentials: CredentialSummary[] = [];
 
   constructor(options: AgentChatClientOptions) {
     this.options = options;
@@ -90,6 +102,22 @@ export class AgentChatClient {
   onHarnesses(listener: (harnesses: HarnessInfo[]) => void): () => void {
     this.harnessListeners.add(listener);
     return () => void this.harnessListeners.delete(listener);
+  }
+
+  /** The stored credentials, as the host last pushed them. Never carries a key. */
+  get credentials(): CredentialSummary[] {
+    return this._credentials;
+  }
+
+  onCredentials(listener: (credentials: CredentialSummary[]) => void): () => void {
+    this.credentialListeners.add(listener);
+    return () => void this.credentialListeners.delete(listener);
+  }
+
+  /** Progress of a sign-in: the URL to open, the lines it printed, how it ended. */
+  onAuth(listener: (event: AuthEvent) => void): () => void {
+    this.authListeners.add(listener);
+    return () => void this.authListeners.delete(listener);
   }
 
   /** Starts connecting; idempotent. */
@@ -136,7 +164,7 @@ export class AgentChatClient {
     return new Promise<MethodResult<M>>((resolve, reject) => {
       const timer = setTimeout(() => {
         if (this.pending.delete(id)) reject(new AgentChatError("internal", `${method} timed out`));
-      }, REQUEST_TIMEOUT_MS);
+      }, timeoutFor(method));
       this.pending.set(id, {
         resolve: (value) => {
           clearTimeout(timer);
@@ -265,6 +293,15 @@ export class AgentChatClient {
       case "harnesses": {
         this._harnesses = message.harnesses;
         for (const listener of this.harnessListeners) listener(message.harnesses);
+        return;
+      }
+      case "credentials": {
+        this._credentials = message.credentials;
+        for (const listener of this.credentialListeners) listener(message.credentials);
+        return;
+      }
+      case "auth": {
+        for (const listener of this.authListeners) listener(message.event);
         return;
       }
     }

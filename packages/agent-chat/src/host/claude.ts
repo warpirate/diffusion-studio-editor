@@ -14,6 +14,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { HARNESS_LABELS } from "../protocol";
 import { compareVersions, parseVersion, resolveBinary, resolveClaudeExecutable, runOnce } from "./env";
 import { QuestionBox, collectResult, newItemId, summarizeInput, toolTitle, truncateDetail } from "./harness";
+import { credentialEnv } from "./providers";
 
 import type {
   CanUseTool,
@@ -29,6 +30,7 @@ import type {
 import type { HarnessInfo, Item, Question, RequestResponse } from "../protocol";
 import type { HostEnv } from "./env";
 import type { Emit, Harness, HarnessSession, OpenOptions, ResumeCursor, TurnOutcome } from "./harness";
+import type { ResolvedCredential } from "./providers";
 
 const MIN_VERSION = "2.0.0";
 const PROBE_TIMEOUT_MS = 25_000;
@@ -114,11 +116,14 @@ const NEVER: AsyncIterable<SDKUserMessage> = {
   [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => {}) }),
 };
 
-function childEnv(host: HostEnv, version: string): Record<string, string> {
+function childEnv(host: HostEnv, version: string, credential?: ResolvedCredential): Record<string, string> {
   return {
     ...host.env,
     CLAUDE_CODE_AUTO_CONNECT_IDE: "0",
     CLAUDE_AGENT_SDK_CLIENT_APP: `diffusion-studio/${version}`,
+    // A brought key wins over whatever login the CLI has: the chat asked
+    // for this credential by id, so it must be the one that gets billed.
+    ...(credential ? credentialEnv(credential) : {}),
   };
 }
 
@@ -128,7 +133,7 @@ const QUESTION_TIMEOUT_S = 24 * 60 * 60;
 /** The tool whose call is the one thing an agent may wait on. */
 const ASK_USER_QUESTION = "AskUserQuestion";
 
-const SIGN_IN_HINT = "Run `claude auth login` in a terminal";
+const SIGN_IN_HINT = "Sign in from the model picker";
 
 /** What the CLI says when it has no usable login: the expired-OAuth message among them. */
 export function isAuthFailure(text: string): boolean {
@@ -228,7 +233,7 @@ class ClaudeSession implements HarnessSession {
       // shows the card and hands the answers back as the tool's input.
       hooks: { PreToolUse: [{ matcher: ASK_USER_QUESTION, hooks: [this.preToolUse], timeout: QUESTION_TIMEOUT_S }] },
       canUseTool: this.canUseTool,
-      env: { ...childEnv(this.options.env, this.version), CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL: "1" },
+      env: { ...childEnv(this.options.env, this.version, this.options.credential), CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL: "1" },
       stderr: (data) => {
         this.stderr = (this.stderr + data).slice(-8192);
       },

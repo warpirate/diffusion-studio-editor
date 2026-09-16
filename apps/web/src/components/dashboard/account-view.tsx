@@ -6,6 +6,7 @@ import { useSearchParams } from "@solidjs/router";
 import { Show, createEffect, createSignal } from "solid-js";
 import { toast } from "somoto";
 
+import { AccountSignInCard } from "@/components/account-sign-in";
 import { useAvatar } from "@/hooks/use-avatar";
 import {
   AlertDialog,
@@ -686,7 +687,35 @@ function DashboardAccountDangerZoneSection() {
   );
 }
 
+/**
+ * What Settings shows when no account is connected. The editor and its
+ * agent never needed one, so this is where someone arrives after a
+ * generation told them it was missing.
+ */
+function DashboardAccountSignInSection() {
+  return (
+    <DashboardTitledSection
+      title="Diffusion Studio account"
+      description="Optional. An account pays for generated images, video, voice and transcription. Editing and the agent work without one."
+    >
+      <div class="max-w-80">
+        <AccountSignInCard title="Connect an account" description="Generated media is billed to it." />
+      </div>
+    </DashboardTitledSection>
+  );
+}
+
 export function DashboardAccountView() {
+  const auth = useAuth();
+
+  return (
+    <Show when={auth.isAuthenticated()} fallback={<DashboardScrollView><DashboardAccountSignInSection /></DashboardScrollView>}>
+      <DashboardAccountViewSignedIn />
+    </Show>
+  );
+}
+
+function DashboardAccountViewSignedIn() {
   return (
     <DashboardScrollView>
       <DashboardAccountPersonalDetailsSection />

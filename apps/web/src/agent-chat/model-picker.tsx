@@ -22,7 +22,8 @@ import { Icon } from "@/components/ui/icon";
 
 import type { HarnessId, HarnessInfo, ModelRef } from "@diffusionstudio/agent-chat";
 
-import { chatState, ensureConnected, modelLabel, refreshHarnesses } from "./store";
+import { openAgentSetup } from "./auth-store";
+import { chatState, ensureConnected, modelLabel, refreshHarnesses, usableCredentials } from "./store";
 
 /** The icons `lib/agents.ts` used, by harness. */
 export const harnessIcon = (harness: HarnessId | null | undefined): string =>
@@ -31,15 +32,18 @@ export const harnessIcon = (harness: HarnessId | null | undefined): string =>
 function unavailableLabel(harness: HarnessInfo): string {
   switch (harness.status) {
     case "not-installed":
-      return "Not installed";
+      return "Not installed — set up";
     case "signed-out":
-      return harness.detail ? `Sign in: ${harness.detail.replace(/^Run /, "run ")}` : "Signed out";
+      return "Signed out — sign in";
     case "checking":
       return "Checking…";
     default:
       return harness.detail ?? "Unavailable";
   }
 }
+
+/** Whether a row for a harness that is not ready should take a click. */
+const actionable = (harness: HarnessInfo): boolean => harness.status === "not-installed" || harness.status === "signed-out";
 
 type ModelPickerProps = {
   value: ModelRef | null;
@@ -90,7 +94,7 @@ export function ModelPicker(props: ModelPickerProps) {
                   <Show
                     when={harness.status === "ready"}
                     fallback={
-                      <DropdownMenuItem disabled>
+                      <DropdownMenuItem disabled={!actionable(harness)} onSelect={() => actionable(harness) && openAgentSetup()}>
                         <Icon name={harnessIcon(harness.id)} />
                         <span class="min-w-0 flex-1 truncate text-muted-foreground">{unavailableLabel(harness)}</span>
                       </DropdownMenuItem>
@@ -112,6 +116,52 @@ export function ModelPicker(props: ModelPickerProps) {
               </>
             )}
           </For>
+
+          {/* Brought keys, each its own group: the provider is the heading,
+              because two of them can carry models of the same name. */}
+          <For each={usableCredentials()}>
+            {(credential) => (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  <DropdownMenuGroupLabel>{credential.label}</DropdownMenuGroupLabel>
+                  <Show
+                    when={credential.models.length > 0}
+                    fallback={
+                      <DropdownMenuItem onSelect={() => openAgentSetup()}>
+                        <Icon name="password-lock" />
+                        <span class="min-w-0 flex-1 truncate text-muted-foreground">No models listed — edit key</span>
+                      </DropdownMenuItem>
+                    }
+                  >
+                    <For each={credential.models}>
+                      {(model) => (
+                        <DropdownMenuItem
+                          onSelect={() => props.onSelect({ harness: credential.harness, model: model.id, credentialId: credential.id })}
+                        >
+                          <Icon name="password-lock" />
+                          <span class="min-w-0 flex-1 truncate">{model.label}</span>
+                          <Show when={props.value?.credentialId === credential.id && props.value?.model === model.id}>
+                            <Icon name="confirm-check" class="size-6" />
+                          </Show>
+                        </DropdownMenuItem>
+                      )}
+                    </For>
+                  </Show>
+                </DropdownMenuGroup>
+              </>
+            )}
+          </For>
+
+          <Show when={chatState.connection !== "unavailable"}>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuItem onSelect={() => openAgentSetup()}>
+                <Icon name="plus-add" />
+                <span class="min-w-0 flex-1 truncate">Add an API key…</span>
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+          </Show>
         </DropdownMenuContent>
       </DropdownMenuPortal>
     </DropdownMenu>

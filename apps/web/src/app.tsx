@@ -9,6 +9,9 @@ import { Toaster } from "@/components/ui/sonner";
 import { AppContextMenu } from "@/components/app-context-menu";
 
 import { AuthProvider, useAuth } from '@/context/auth';
+import { agentStateResolved, ensureConnected, needsAgentLogin } from '@/agent-chat/store';
+import { agentSetupOpen, closeAgentSetup } from '@/agent-chat/auth-store';
+import { ModelLoginPage } from '@/pages/model-login';
 import { PersistRoute } from '@/lib/persist-route';
 import { EditorApi } from '@/dapi';
 import { UpgradeDialog } from '@/components/upgrade-dialog';
@@ -16,21 +19,25 @@ import { PurchaseSuccess } from '@/components/purchase-success';
 import { ScreenTooSmall } from '@/components/screen-too-small';
 import { UnsupportedBrowser } from '@/components/unsupported-browser';
 import { ProjectPage } from '@/pages/project';
-import { LoginPage } from '@/pages/login';
 import { AuthCallbackPage } from '@/pages/auth-callback';
 import { NotFoundPage } from '@/pages/not-found';
 import { DashboardPage } from '@/pages/dashboard';
 
+/**
+ * What has to be true before the editor is usable. The agent's sign-in is
+ * the gate: it is what the editing is done with, and it is the one this
+ * build can always offer. A Diffusion Studio account is separate — it pays
+ * for generated images, video and voice — so it is only asked for where
+ * this build is configured for one, and never before the editor opens.
+ */
 function AuthGate(props: { children: JSX.Element }) {
   const auth = useAuth();
+  ensureConnected();
 
   return (
-    <Show when={!auth.isLoading()}>
-      <Show when={auth.isAuthenticated()}>
+    <Show when={!auth.isLoading() && agentStateResolved()}>
+      <Show when={!needsAgentLogin()} fallback={<ModelLoginPage />}>
         {props.children}
-      </Show>
-      <Show when={!auth.isAuthenticated()}>
-        <LoginPage />
       </Show>
     </Show>
   );
@@ -38,9 +45,10 @@ function AuthGate(props: { children: JSX.Element }) {
 
 function BootSplash() {
   const auth = useAuth();
+  ensureConnected();
 
   createEffect(() => {
-    if (auth.isLoading()) return;
+    if (auth.isLoading() || !agentStateResolved()) return;
     document.getElementById('boot-splash')?.remove();
   });
 
@@ -69,6 +77,9 @@ function App() {
             <AuthProvider>
               {props.children}
               <BootSplash />
+              <Show when={agentSetupOpen()}>
+                <ModelLoginPage onDismiss={closeAgentSetup} />
+              </Show>
               <UpgradeDialog />
               <PurchaseSuccess />
               <EditorApi />

@@ -12,6 +12,8 @@ import { app, utilityProcess } from "electron";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 
+import { credentialKey } from "./credential-key";
+
 import type { UtilityProcess } from "electron";
 
 type AgentChatOptions = { dataDir: string; mcpUrl: string | null; version: string };
@@ -30,6 +32,7 @@ let stopped = false;
 
 function spawn(): void {
   if (!options || stopped) return;
+  const vaultKey = credentialKey();
   const path = join(app.getAppPath(), "dist", "agent-host.mjs");
   const proc = utilityProcess.fork(path, [], { serviceName: "Agent Chat", stdio: "inherit" });
   child = proc;
@@ -40,6 +43,9 @@ function spawn(): void {
       config: {
         token,
         dataDir: options!.dataDir,
+        // Read at fork, not at start: the keychain is only ready once the
+        // app is, and a null here just moves the vault to its own key file.
+        ...(vaultKey ? { credentialKey: vaultKey } : {}),
         mcp: options!.mcpUrl ? { name: "diffusion", url: options!.mcpUrl } : null,
         version: options!.version,
         allowedOrigins: app.isPackaged ? ["file://", "null"] : ["file://", "null", DEV_ORIGIN],

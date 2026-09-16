@@ -8,7 +8,7 @@
 // owns (chats, transcripts, questions) is a view here; what is ours alone
 // is the draft per chat, which tab is up, and which chat each project shows.
 
-import { batch, createRoot } from "solid-js";
+import { batch, createRoot, createSignal } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import { toast } from "somoto";
 
@@ -19,6 +19,7 @@ import {
   type ChatEvent,
   type ChatSnapshot,
   type ChatSummary,
+  type CredentialSummary,
   type HarnessInfo,
   type Item,
   type ModelRef,
@@ -45,6 +46,8 @@ export const draftKey = (projectId: string, chatId: string | null): string => ch
 type State = {
   connection: ConnectionState;
   harnesses: HarnessInfo[];
+  /** Brought keys, as the host pushes them. Never carries a key itself. */
+  credentials: CredentialSummary[];
   /** Transcripts by chat id, for every chat opened this session. */
   chats: Record<string, Transcript>;
   /** History by project id, newest first. */
@@ -61,6 +64,7 @@ const CONNECT_TIMEOUT_MS = 4000;
 const [state, setState] = createStore<State>({
   connection: "closed",
   harnesses: [],
+  credentials: [],
   chats: {},
   lists: {},
   drafts: {},
@@ -75,8 +79,15 @@ const root = createRoot(() => {
   const [tab, setTab] = createStoredSignal(settings.define<SidebarTab>("rightSidebar.tab", "editor"));
   const [model, setModel] = createStoredSignal(settings.define<ModelRef | null>("agentChat.model", null));
   const [active, setActive] = createStoredSignal(settings.define<Record<string, string>>("agentChat.active", {}));
-  return { tab, setTab, model, setModel, active, setActive };
+  // Whether the first screen has been dismissed. The editor works without
+  // an agent, so the choice is remembered rather than asked for every launch.
+  const [skipped, setSkipped] = createStoredSignal(settings.define<boolean>("agentChat.skippedLogin", false));
+  return { tab, setTab, model, setModel, active, setActive, skipped, setSkipped };
 });
+
+/** Whether the user has chosen to get on without connecting an agent. */
+export const skippedAgentLogin = root.skipped;
+export const setSkippedAgentLogin = root.setSkipped;
 
 /** Which tab the right sidebar shows; persists across sessions. */
 export const sidebarTab = root.tab;
@@ -106,21 +117,36 @@ export function setActiveChat(projectId: string, chatId: string | null): void {
 let connected = false;
 let harnessesAt = 0;
 
+/**
+ * Whether the host has said anything about its harnesses yet. The first
+ * screen waits on this: asking someone to connect an agent they already
+ * have, for the half-second before the probes land, is a worse bug than a
+ * slightly longer splash.
+ */
+const [probed, setProbed] = createSignal(false);
+export { probed as harnessesProbed };
+
 /** Connects once; safe to call from anywhere the chat is about to be used. */
 export function ensureConnected(): void {
   if (connected) return;
   connected = true;
-  client.onState((connection) => setState("connection", connection));
+  client.onState((connection) => {
+    setState("connection", connection);
+    // No host to answer: nothing is coming, so stop waiting on it.
+    if (connection === "unavailable") setProbed(true);
+  });
   client.onHarnesses((harnesses) => {
     harnessesAt = Date.now();
+    setProbed(true);
     setState("harnesses", harnesses);
   });
+  client.onCredentials((credentials) => setState("credentials", credentials));
   setState("connection", hasHost() ? "connecting" : "unavailable");
   if (hasHost()) client.connect();
 }
 
 /** Resolves once the socket is open, or rejects after a short wait. */
-function whenOpen(): Promise<void> {
+export function whenOpen(): Promise<void> {
   ensureConnected();
   if (client.state === "open") return Promise.resolve();
   if (!hasHost()) return Promise.reject(new AgentChatError("disconnected", "Chat runs in the desktop app"));
@@ -147,17 +173,53 @@ export function refreshHarnesses(): void {
 
 export const readyHarnesses = (): HarnessInfo[] => state.harnesses.filter((harness) => harness.status === "ready");
 
+/**
+ * The brought keys that can actually run: a key supplies the login, but not
+ * the CLI that carries it, so the binary still has to be installed. While
+ * the probes are in flight nothing is excluded — a row that flickers out is
+ * worse than one that turns out to need an install.
+ */
+export const usableCredentials = (): CredentialSummary[] =>
+  state.credentials.filter((credential) => {
+    const harness = state.harnesses.find((entry) => entry.id === credential.harness);
+    return !harness || harness.status !== "not-installed";
+  });
+
+/** Whether there is any way to run an agent at all: a signed-in CLI, or a key. */
+export const agentAvailable = (): boolean => readyHarnesses().length > 0 || usableCredentials().length > 0;
+
+/**
+ * Whether the first screen should be shown. Only where there is a host to
+ * sign in to — a plain web build has no CLI to drive, so it would be asking
+ * for something it cannot accept.
+ */
+export function needsAgentLogin(): boolean {
+  if (!hasHost() || skippedAgentLogin()) return false;
+  return probed() && !agentAvailable();
+}
+
+/** Whether the agent state has settled enough to decide what to render. */
+export const agentStateResolved = (): boolean => !hasHost() || probed();
+
 /** Families picked before anything is remembered, best first, across every ready harness. */
 const PREFERRED_MODELS = [/fable/i, /astra/i, /opus/i];
 
+const credentialById = (id: string | undefined): CredentialSummary | undefined =>
+  id ? state.credentials.find((entry) => entry.id === id) : undefined;
+
 /**
- * The model the composers send with: the remembered one if its harness is
- * ready, else the best preferred family on offer, else the first ready default.
+ * The model the composers send with: the remembered one if it still works,
+ * else the best preferred family on a ready harness, else the first ready
+ * default, else the first brought key. A remembered credential outranks the
+ * preference list — it was chosen on purpose, and it is the one being paid for.
  */
 export function currentModel(): ModelRef | null {
   const ready = readyHarnesses();
   const remembered = root.model();
-  if (remembered) {
+  if (remembered?.credentialId) {
+    const credential = usableCredentials().find((entry) => entry.id === remembered.credentialId);
+    if (credential && credential.models.some((model) => model.id === remembered.model)) return remembered;
+  } else if (remembered) {
     const harness = ready.find((entry) => entry.id === remembered.harness);
     if (harness && harness.models.some((model) => model.id === remembered.model)) return remembered;
   }
@@ -168,14 +230,20 @@ export function currentModel(): ModelRef | null {
     }
   }
   const first = ready[0];
-  if (!first) return null;
-  const model = first.defaultModel ?? first.models[0]?.id;
-  return model ? { harness: first.id, model } : null;
+  if (first) {
+    const model = first.defaultModel ?? first.models[0]?.id;
+    if (model) return { harness: first.id, model };
+  }
+  const credential = usableCredentials()[0];
+  const fallback = credential?.defaultModel ?? credential?.models[0]?.id;
+  return credential && fallback ? { harness: credential.harness, model: fallback, credentialId: credential.id } : null;
 }
 
 /** The label the pickers show for a model ref. */
 export function modelLabel(ref: ModelRef | null): string {
   if (!ref) return "No agent available";
+  const credential = credentialById(ref.credentialId);
+  if (credential) return credential.models.find((model) => model.id === ref.model)?.label ?? ref.model;
   const harness = state.harnesses.find((entry) => entry.id === ref.harness);
   return harness?.models.find((model) => model.id === ref.model)?.label ?? ref.model;
 }

@@ -13,6 +13,7 @@ import { ClaudeHarness } from "./claude";
 import { CodexHarness } from "./codex";
 import { DEFAULT_ORIGINS, startServer } from "./server";
 import { ChatStore } from "./store";
+import { CredentialVault } from "./vault";
 
 import type { Harness, McpConfig } from "./harness";
 
@@ -23,8 +24,15 @@ export type AgentHostConfig = {
   port?: number;
   /** required; 32 random bytes, base64url */
   token: string;
-  /** chat storage root */
+  /** chat storage root; the credential vault lives here too */
   dataDir: string;
+  /**
+   * 32 bytes, base64: what the credential vault is encrypted with. The
+   * desktop app keeps this in the OS keychain and passes it in, since a
+   * utility process has no `safeStorage` of its own. Omitted, the vault
+   * writes a 0600 key file next to itself.
+   */
+  credentialKey?: string;
   /** default: file://, null, http://localhost:5173 */
   allowedOrigins?: string[];
   /** injected into every session */
@@ -49,9 +57,11 @@ export async function createAgentHost(config: AgentHostConfig): Promise<RunningA
   const log = config.log ?? ((message: string) => console.error(`[agent-chat] ${message}`));
   const env = hydrateEnv();
   const store = new ChatStore(config.dataDir);
+  const vault = new CredentialVault({ dataDir: config.dataDir, ...(config.credentialKey ? { key: config.credentialKey } : {}), log });
   const agentHost = new AgentHost({
     store,
     harnesses: config.harnesses ?? [new ClaudeHarness(), new CodexHarness()],
+    vault,
     env,
     mcp: config.mcp,
     instructions: config.instructions,
@@ -85,6 +95,10 @@ export { ChatStore } from "./store";
 export { FakeHarness } from "./fake";
 export { ClaudeHarness } from "./claude";
 export { CodexHarness } from "./codex";
+export { CredentialVault } from "./vault";
+export { AuthRunner } from "./auth";
+export { codexProviderArgs, credentialEnv, listModels, normalizeBaseUrl, validateBaseUrl } from "./providers";
 export { hydrateEnv, inheritedEnv, which, resolveBinary, killTree } from "./env";
 export type { Harness, HarnessSession, McpConfig, ResumeCursor, OpenOptions } from "./harness";
+export type { ResolvedCredential } from "./providers";
 export type { HostEnv } from "./env";
